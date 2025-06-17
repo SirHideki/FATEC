@@ -1,0 +1,113 @@
+Protocolo SPI - Projeto 2
+
+----------------------------------------------------------------------------------------------------
+
+Bibliotecas:
+SdFat
+
+----------------------------------------------------------------------------------------------------
+
+Programação do Arduino:
+#include "SdFat.h" // Inclui a biblioteca SdFat, necessária para operar o cartão SD
+
+#define SPI_VELO SD_SCK_MHZ(4) // Define a velocidade de comunicação SPI
+#define CS_PIN 10               // Define o pino Chip Select do módulo SD Card (geralmente D10)
+
+SdFat sd; // Cria uma instância do objeto SdFat
+
+void setup() {
+  Serial.begin(115200); // Inicia a comunicação serial a uma alta velocidade para debug
+
+  Serial.println("Inicializando SD Card...");
+  // Tenta inicializar o SD Card
+  if (!sd.begin(CS_PIN, SPI_VELO)) {
+    Serial.println("ERRO: Falha na inicializacao do SD Card!");
+    // Exibe códigos de erro detalhados se a inicialização falhar
+    if (sd.card()->errorCode()) {
+      Serial.print("SD card error code: ");
+      Serial.println(sd.card()->errorCode(), HEX);
+    } else if (sd.vol()->fatType() == 0) {
+      Serial.println("Nao foi encontrada uma particao FAT16/FAT32 valida.");
+    } else {
+      Serial.println("Nao foi possivel determinar o tipo de erro.");
+    }
+    while (true); // Loop infinito para travar o programa se o SD não iniciar
+  }
+  Serial.println("SD Card inicializado com sucesso.");
+
+  Serial.println("\n--- Tentando ler 'wokwi.txt' ---");
+  
+  // Abre o arquivo para leitura. O nome deve ser EXATO (case-sensitive)
+  File meuDocumento = sd.open("wokwi.txt"); 
+
+  if (meuDocumento) {
+    Serial.println("Conteudo de 'wokwi.txt':");
+    // Lê o conteúdo do arquivo byte a byte e imprime no Serial Monitor
+    while (meuDocumento.available()) {
+      Serial.write(meuDocumento.read());
+    }
+    // Fecha o arquivo quando a leitura termina
+    meuDocumento.close();
+    Serial.println("\n--- Leitura do arquivo concluida ---");
+  } else {
+    // Se o arquivo não puder ser aberto, exibe uma mensagem de erro
+    Serial.println("ERRO: Nao foi possivel abrir 'meuarquivo.txt'.");
+    Serial.println("Verifique se o nome do arquivo esta correto e se ele existe no SD.");
+    // Opcional: Liste os arquivos no SD para verificar o que está presente
+    Serial.println("\nArquivos encontrados no SD:");
+    sd.ls(LS_R | LS_SIZE); // Lista recursivamente com tamanho
+  }
+
+
+  if (!sd.begin(CS_PIN, SPI_VELO)) {
+    if (sd.card()->errorCode()) {
+      Serial.println("SD initialization failed.");
+    } else if (sd.vol()->fatType() == 0) {
+      Serial.println("Can't find a valid FAT16/FAT32 partition.");
+    } else {
+      Serial.println("Can't determine error type");
+    }
+    return;
+  }
+
+  Serial.println("Files on card:");
+  Serial.println("   Size    Name");
+
+  sd.ls(LS_R | LS_SIZE);
+}
+
+void loop() {
+  // O loop fica vazio neste exemplo, pois a leitura é feita apenas no setup.
+  // Se você quiser ler continuamente ou acionar a leitura por um botão,
+  // a lógica seria colocada aqui.
+}
+
+----------------------------------------------------------------------------------------------------
+
+Diagrama JSON:
+{
+  "version": 1,
+  "author": "Uri Shaked",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-arduino-uno", "id": "uno", "top": 71.32, "left": -100.01, "attrs": {} },
+    {
+      "type": "wokwi-microsd-card",
+      "id": "sd1",
+      "top": -151.03,
+      "left": -60.53,
+      "rotate": 90,
+      "attrs": {}
+    }
+  ],
+  "connections": [
+    [ "sd1:SCK", "uno:13", "yellow", [ "v96", "h44.2" ] ],
+    [ "sd1:GND", "uno:GND.1", "black", [ "v86.4", "h24.98" ] ],
+    [ "sd1:DO", "uno:12", "orange", [ "v76.8", "h34.38" ] ],
+    [ "sd1:DI", "uno:11", "purple", [ "v105.6", "h82.48" ] ],
+    [ "sd1:CS", "uno:10", "green", [ "v7", "h-0.06", "v108.2", "h101.49" ] ],
+    [ "uno:5V", "sd1:VCC", "red", [ "v25.18", "h-175.19", "v-234.18", "h163.34" ] ]
+  ],
+  "dependencies": {}
+}
+----------------------------------------------------------------------------------------------------
