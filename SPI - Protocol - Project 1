@@ -1,0 +1,407 @@
+Protocolo SPI - Projeto 1
+
+Programação do arduino:
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+#include <Adafruit_FT6206.h>
+#include <DHT.h>
+
+// Define pins para ILI9341
+#define TFT_CS 10
+#define TFT_RST 9
+#define TFT_DC 8
+#define TFT_MOSI 11
+#define TFT_CLK 13
+#define TFT_MISO 12
+
+// Define pin e tipo para DHT22
+#define DHTPIN 4
+#define DHTTYPE DHT22
+
+// --- Definições para LED e Buzzer ---
+#define LED_PIN 2     // Pino onde o LED está conectado
+#define BUZZER_PIN 3  // Pino onde o Buzzer está conectado
+// --- FIM NOVAS DEFINIÇÕES ---
+
+// Inicia o TFT e touch screen
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+Adafruit_FT6206 touch = Adafruit_FT6206();
+DHT dht(DHTPIN, DHTTYPE);
+
+unsigned long tempoAnterior = 0; // TimePrevious
+float temperaturaAnterior = NAN; // previousTemp
+float deslocamentoCalibracao = 0.0; // calibrationOffset
+int verif1 = 0;
+
+
+enum Tela { MENU_PRINCIPAL, TELA_SECUNDARIA }; // Screen, PRINCIPAL_MENU, SECONDARY_SCREEN
+Tela telaAtual = MENU_PRINCIPAL; // currentScreen
+// Funções
+void displayPrincipalMenu(); // Mantido o nome original para evitar quebras em outras partes do código. Se quiser, poderia ser 'exibirMenuPrincipal'
+void displayStaticText(); // Mantido o nome original para evitar quebras em outras partes do código. Se quiser, poderia ser 'exibirTextoEstatico'
+void updateSecondaryScreenTemperature(bool forcarAtualizacao = false); // updateSecondaryScreenTemperature, forceUpdate
+void displayVerif(); // Mantido o nome original. Se quiser, poderia ser 'exibirVerificacao'
+void checkTouch(); // Mantido o nome original. Se quiser, poderia ser 'verificarToque'
+void handleTouch(int coord_x, int coord_y);
+
+void setup()
+{
+  Serial.begin(9600);
+  Serial.println("--- Iniciando Setup ---"); // Debug: Início do setup
+
+  // --- Configuração dos pinos do LED e Buzzer ---
+  Serial.println("Configurando pinos do LED e Buzzer...");
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);    // Garante que o LED começa desligado
+  noTone(BUZZER_PIN);          // Garante que o buzzer começa desligado
+  Serial.println("Pinos de LED e Buzzer configurados.");
+  // ACIONAMENTO: LED e BUZZER no início do setup para indicar que o Arduino ligou
+  digitalWrite(LED_PIN, HIGH);
+  tone(BUZZER_PIN, 1500, 100); 
+  delay(100);
+  digitalWrite(LED_PIN, LOW);
+  noTone(BUZZER_PIN);
+  delay(500);
+
+  // --- Inicialização do TFT ---
+  Serial.println("Inicializando TFT...");
+  tft.begin();
+  tft.setRotation(3);
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_WHITE);
+  Serial.println("TFT inicializado. Testando display...");
+  tft.setCursor(10, 10);
+  tft.print("Display ON!");
+  delay(1000); // Intervalo de tempo para ver a mensagem
+
+  // --- Inicialização do Touchscreen ---
+  Serial.println("Inicializando Touchscreen...");
+  if (!touch.begin())
+  {
+    Serial.println("ERRO: Nao foi possivel iniciar o Touchscreen!");
+    tft.setCursor(10, 40); // Tenta escrever no display se ele estiver funcionando
+    tft.setTextColor(ILI9341_RED);
+    tft.print("Erro Touch!");
+    // ACIONAMENTO: LED e BUZZER para erro no Touchscreen
+    digitalWrite(LED_PIN, HIGH);
+    tone(BUZZER_PIN, 300, 500);
+    delay(500);
+    digitalWrite(LED_PIN, LOW);
+    noTone(BUZZER_PIN);
+  }
+  else
+  {
+    Serial.println("Touchscreen iniciado com sucesso.");
+    tft.setCursor(10, 40);
+    tft.setTextColor(ILI9341_GREEN);
+    tft.print("Touch OK!");
+    // ACIONAMENTO: LED e BUZZER para sucesso no Touchscreen
+    digitalWrite(LED_PIN, HIGH);
+    tone(BUZZER_PIN, 1200, 100);
+    delay(100);
+    digitalWrite(LED_PIN, LOW);
+    noTone(BUZZER_PIN);
+  }
+  delay(1000);
+
+  // --- Inicialização do DHT22 ---
+  Serial.println("Inicializando DHT22...");
+  dht.begin();
+  Serial.println("DHT22 iniciado.");
+  delay(500);
+
+  Serial.println("Setup concluido. Iniciando loop...");
+  tft.fillScreen(ILI9341_BLACK);
+  tempoAnterior = millis();
+  displayPrincipalMenu();
+}
+
+void loop()
+{
+  // Atualizar a temperatura apenas a cada 2 segundos
+  if (millis() - tempoAnterior >= 2000)
+  {
+    if (telaAtual == MENU_PRINCIPAL)
+    {
+      displayPrincipalMenu();
+    }
+    else if (telaAtual == TELA_SECUNDARIA)
+    {
+      updateSecondaryScreenTemperature();
+    }
+    tempoAnterior = millis();
+  }
+
+  // Verifica o toque na tela
+  checkTouch();
+}
+
+void displayPrincipalMenu()
+{
+  float TempCourant = dht.readTemperature();
+  float TempEdit = TempCourant + deslocamentoCalibracao;
+
+  if (abs(TempEdit - temperaturaAnterior) > 0.1 || isnan(temperaturaAnterior)) // previousTemp
+  {
+    tft.fillScreen(ILI9341_WHITE);
+    tft.setCursor(80, 110);
+    tft.setTextColor(ILI9341_BLACK);
+    tft.setTextSize(2);
+    tft.print("Temp: ");
+    tft.print(TempEdit);
+    tft.print(" C");
+
+    // Desenha o botão "S" (para ir para a tela de calibração)
+    tft.fillRect(260, 10, 40, 50, ILI9341_GREEN);
+    tft.setCursor(266, 21);
+    tft.setTextColor(ILI9341_RED);
+    tft.setTextSize(2);
+    tft.print(" S ");
+
+    temperaturaAnterior = TempEdit;
+  }
+}
+
+void displayStaticText()
+{
+  updateSecondaryScreenTemperature(true);
+
+  // Desenha o botão "+"
+  tft.fillRect(160, 70, 40, 50, ILI9341_GREEN);
+  tft.setCursor(163, 87);
+  tft.setTextColor(ILI9341_RED);
+  tft.setTextSize(2);
+  tft.print(" + ");
+
+  // Desenha o botão "-"
+  tft.fillRect(210, 70, 40, 50, ILI9341_RED);
+  tft.setCursor(213, 87);
+  tft.setTextColor(ILI9341_GREEN);
+  tft.setTextSize(2);
+  tft.print(" - ");
+
+  // Desenha o botão "Resetar"
+  tft.fillRect(260, 70, 60, 50, ILI9341_BLUE);
+  tft.setCursor(263, 87);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextSize(2);
+  tft.print("RST");
+
+  // Desenha o botão "Voltar"
+  tft.fillRect(260, 10, 60, 50, ILI9341_YELLOW);
+  tft.setCursor(263, 27);
+  tft.setTextColor(ILI9341_BLACK);
+  tft.setTextSize(2);
+  tft.print("Voltar");
+
+  displayVerif();
+}
+
+void updateSecondaryScreenTemperature(bool forcarAtualizacao)
+{
+  float TempCourant = dht.readTemperature();
+  float TempEdit = TempCourant + deslocamentoCalibracao; 
+
+  if (abs(TempEdit - temperaturaAnterior) > 0.1 || forcarAtualizacao || isnan(temperaturaAnterior)) // previousTemp, forceUpdate
+  {
+    tft.fillRect(50, 30, 200, 30, ILI9341_BLACK);
+    tft.setCursor(50, 30);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+    tft.setTextSize(2);
+    tft.print("Temp: ");
+    tft.print(TempEdit);
+    tft.print(" C");
+
+    Serial.print("Temperature: ");
+    Serial.print(TempEdit);
+    Serial.println(" C");
+
+    temperaturaAnterior = TempEdit;
+  }
+}
+
+void displayVerif()
+{
+  tft.fillRect(50, 110, 100, 30, ILI9341_BLACK);
+  tft.setCursor(50, 110);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  tft.print("Verif: ");
+  tft.print(verif1);
+}
+
+void checkTouch()
+{
+  if (touch.touched())
+  {
+    TS_Point p = touch.getPoint();
+
+    int coord_x = map(p.y, 0, 320, 320, 0);
+    int coord_y = p.x; // y
+
+    handleTouch(coord_x, coord_y);
+  }
+}
+
+void handleTouch(int coord_x, int coord_y)
+{
+  bool tocado = false; // touched
+
+  if (telaAtual == MENU_PRINCIPAL)
+  {
+    // Verifica se o botão "S" é pressionado
+    if (coord_x > 260 && coord_x < 300 && coord_y > 10 && coord_y < 60) // x, y
+    {
+      telaAtual = TELA_SECUNDARIA;
+      tft.fillScreen(ILI9341_BLACK);
+      displayStaticText();
+      tocado = true;
+    }
+
+  }
+  else if (telaAtual == TELA_SECUNDARIA)
+  {
+    // Verifica se o botão "+" é pressionado
+    if (coord_x > 160 && coord_x < 200 && coord_y > 70 && coord_y < 120) // x, y
+    {
+      deslocamentoCalibracao += 0.1; 
+      verif1 += 1;
+      Serial.print("Calibration Offset: ");
+      Serial.print(deslocamentoCalibracao); 
+      Serial.print(" verif1: ");
+      Serial.println(verif1);
+      updateSecondaryScreenTemperature(true);
+      tocado = true; 
+    }
+
+    // Verifica se o botão "-" é pressionado
+    if (coord_x > 210 && coord_x < 250 && coord_y > 70 && coord_y < 120) // x, y
+    {
+      deslocamentoCalibracao -= 0.1; 
+      verif1 -= 1;
+      Serial.print("Calibration Offset: ");
+      Serial.print(deslocamentoCalibracao); 
+      Serial.print(" verif1: ");
+      Serial.println(verif1);
+      updateSecondaryScreenTemperature(true);
+      tocado = true; 
+    }
+
+    // Verifica se o botão "Resetar" é pressionado
+    if (coord_x > 260 && coord_x < 320 && coord_y > 70 && coord_y < 120) // x, y
+    {
+      deslocamentoCalibracao = 0.0; 
+      verif1 = 0;
+      Serial.println("Values Reset"); 
+      Serial.print("Calibration Offset: ");
+      Serial.print(deslocamentoCalibracao);
+      Serial.print(" verif1: ");
+      Serial.println(verif1);
+      updateSecondaryScreenTemperature(true);
+      tocado = true; // touched
+    }
+
+    // Verifica se o botão "Voltar" é pressionado
+    if (coord_x > 260 && coord_x < 320 && coord_y > 10 && coord_y < 60) // x, y
+    {
+      telaAtual = MENU_PRINCIPAL; 
+      tft.fillScreen(ILI9341_WHITE);
+      temperaturaAnterior = NAN; 
+      displayPrincipalMenu();
+      tocado = true; // 
+    }
+  }
+
+  // Adicione um pequeno atraso para eliminar o ruído do toque
+  // ACIONAMENTO: LED e BUZZER ao detectar qualquer toque em um botão
+  if (tocado) // touched
+  {
+    digitalWrite(LED_PIN, HIGH); // Acende o LED brevemente
+    tone(BUZZER_PIN, 2000, 50);  // Toca uma nota curta e aguda
+    delay(50); // Espera o som
+    digitalWrite(LED_PIN, LOW);  // Desliga o LED
+    noTone(BUZZER_PIN);          // Para o som
+
+    if (telaAtual == TELA_SECUNDARIA) 
+    {
+      displayVerif();
+    }
+    delay(200); // Ajusta o atraso do ruído
+  }
+}
+
+
+Diagrama JSON:
+{
+  "version": 1,
+  "author": "Mohmed Khalil Akkari EXP",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-breadboard", "id": "bb1", "top": 342.6, "left": -93.2, "attrs": {} },
+    { "type": "wokwi-arduino-uno", "id": "uno", "top": 39, "left": 181.8, "attrs": {} },
+    {
+      "type": "board-ili9341-cap-touch",
+      "id": "lcd1",
+      "top": -234.12,
+      "left": -190.34,
+      "rotate": 270,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht1",
+      "top": 307.5,
+      "left": 129,
+      "attrs": { "temperature": "61.3" }
+    },
+    { "type": "wokwi-led", "id": "led1", "top": -118.8, "left": 455, "attrs": { "color": "red" } },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": -33.6,
+      "left": 450.65,
+      "rotate": 90,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "bz1",
+      "top": -26.4,
+      "left": 625.8,
+      "attrs": { "volume": "0.1" }
+    }
+  ],
+  "connections": [
+    [ "lcd1:CS", "uno:10", "yellow", [ "h259.2", "v0", "h37.7" ] ],
+    [ "lcd1:RST", "uno:9", "green", [ "h307.2", "v115.2" ] ],
+    [ "lcd1:D/C", "uno:8", "green", [ "h86.4", "v-134.4", "h230" ] ],
+    [ "lcd1:MOSI", "uno:11", "red", [ "h48", "v-76.8", "h239.4" ] ],
+    [ "lcd1:SCK", "uno:13", "red", [ "h268.8", "v144" ] ],
+    [ "lcd1:LED", "uno:3.3V", "violet", [ "h134.4", "v364.8", "h159" ] ],
+    [ "lcd1:SCL", "uno:A5", "green", [ "h67.2", "v422.4", "h331.7" ] ],
+    [ "lcd1:SDA", "uno:A4", "purple", [ "h691.2", "v393.6", "h-301.8" ] ],
+    [ "led1:C", "uno:GND.1", "#8f4814", [ "v38.4", "h-153.5" ] ],
+    [ "r1:1", "led1:A", "black", [ "h0" ] ],
+    [ "r1:2", "uno:2", "black", [ "v8.4", "h-61.7" ] ],
+    [ "uno:5V", "bb1:tp.50", "red", [ "v57.5", "h167" ] ],
+    [ "bb1:23t.e", "bb1:23b.f", "red", [ "v0" ] ],
+    [ "bb1:23b.j", "bb1:17b.j", "red", [ "v0" ] ],
+    [ "bb1:17b.f", "bb1:tp.13", "red", [ "v0" ] ],
+    [ "lcd1:VCC", "bb1:tp.2", "red", [ "h115.2", "v288", "h-182.4" ] ],
+    [ "uno:GND.2", "bb1:tn.50", "black", [ "v47.9", "h167.1", "v86.4" ] ],
+    [ "bb1:26t.e", "bb1:26b.f", "black", [ "v0" ] ],
+    [ "bb1:tn.1", "bb1:bn.1", "black", [ "v-0.1", "h-58.4", "v182.4" ] ],
+    [ "bb1:26b.j", "bb1:bn.21", "black", [ "v0" ] ],
+    [ "lcd1:GND", "bb1:tn.26", "black", [ "h124.8", "v326.4", "h76.8" ] ],
+    [ "bz1:2", "bb1:tn.36", "black", [ "v316.8", "h-307.6" ] ],
+    [ "bb1:24b.f", "bb1:24t.e", "green", [ "v0" ] ],
+    [ "bb1:24b.h", "uno:4", "orange", [ "v86.4", "h422.4", "v-547.2", "h-182.4" ] ],
+    [ "bz1:1", "uno:3", "gold", [ "v38.4", "h-105.6", "v-220.8", "h-134.4" ] ],
+    [ "dht1:VCC", "bb1:23t.d", "", [ "$bb" ] ],
+    [ "dht1:SDA", "bb1:24t.d", "", [ "$bb" ] ],
+    [ "dht1:NC", "bb1:25t.d", "", [ "$bb" ] ],
+    [ "dht1:GND", "bb1:26t.d", "", [ "$bb" ] ]
+  ],
+  "dependencies": {}
+}
